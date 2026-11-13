@@ -1,13 +1,17 @@
 """
-Hardware and Performance Detector module.
-Detects CPU, RAM, GPU (NVIDIA CUDA VRAM), and calculates optimal LLM parameters
-(quantization size, context window, gpu layer offloading).
+Cross-Platform Hardware and Performance Detector.
+Supports:
+- Linux (Bazzite, Fedora, Kali, Ubuntu, Debian, Arch)
+- macOS (Apple Silicon M1/M2/M3/M4 & Intel)
+- Windows (CUDA, DirectML, CPU)
 """
 
 import os
+import sys
 import psutil
 import subprocess
 import shutil
+import platform
 
 def get_hardware_profile():
     cpu_count = psutil.cpu_count(logical=True)
@@ -18,9 +22,20 @@ def get_hardware_profile():
     total_ram_gb = round(virtual_mem.total / (1024 ** 3), 2)
     available_ram_gb = round(virtual_mem.available / (1024 ** 3), 2)
     
-    # GPU detection (NVIDIA)
     gpu_info = None
-    if shutil.which("nvidia-smi"):
+    is_apple_silicon = False
+
+    # 1. macOS Apple Silicon detection (Unified Memory Metal GPU)
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        is_apple_silicon = True
+        gpu_info = [{
+            "name": f"Apple Silicon ({platform.processor() or 'M-Series'})",
+            "total_vram_mb": total_ram_gb * 1024, # Unified memory
+            "free_vram_mb": available_ram_gb * 1024
+        }]
+
+    # 2. NVIDIA GPU detection (Linux / Windows)
+    elif shutil.which("nvidia-smi"):
         try:
             cmd = "nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader,nounits"
             res = subprocess.check_output(cmd, shell=True, text=True).strip()
@@ -40,22 +55,21 @@ def get_hardware_profile():
         except Exception:
             pass
 
-    # Recommend model specs based on resources
+    # Recommendation Calculation
     recommendation = {}
     total_vram_mb = sum(g["total_vram_mb"] for g in gpu_info) if gpu_info else 0
 
-    if total_vram_mb >= 12000 or (gpu_info is None and available_ram_gb >= 24):
+    if is_apple_silicon or total_vram_mb >= 12000 or (gpu_info is None and available_ram_gb >= 24):
         recommendation["model_size"] = "14B"
         recommendation["quant"] = "Q4_K_M"
-        recommendation["n_gpu_layers"] = -1 if gpu_info else 0
+        recommendation["n_gpu_layers"] = -1
         recommendation["context_size"] = 8192
-    elif total_vram_mb >= 3500 or available_ram_gb >= 12:
+    elif total_vram_mb >= 3500 or available_ram_gb >= 10:
         recommendation["model_size"] = "7B - 8B"
         recommendation["quant"] = "Q4_K_M"
-        # RTX 3050 has ~4GB VRAM -> offload 20-28 layers
         recommendation["n_gpu_layers"] = 24 if gpu_info else 0
         recommendation["context_size"] = 4096
-    elif available_ram_gb >= 6:
+    elif available_ram_gb >= 5:
         recommendation["model_size"] = "3B - 4B"
         recommendation["quant"] = "Q4_K_M"
         recommendation["n_gpu_layers"] = -1 if gpu_info else 0
@@ -67,6 +81,8 @@ def get_hardware_profile():
         recommendation["context_size"] = 2048
 
     return {
+        "os": platform.system(),
+        "arch": platform.machine(),
         "cpu_threads": cpu_count,
         "physical_cpus": physical_cpus,
         "total_ram_gb": total_ram_gb,
