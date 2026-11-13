@@ -1,0 +1,3 @@
+llama-cpp-python>=0.2.80
+huggingface_hub>=0.20.0
+psutil>=5.9.0

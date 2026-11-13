@@ -1,0 +1,5 @@
+models/*.gguf
+models/.cache/
+__pycache__/
+*.pyc
+config.json
